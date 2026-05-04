@@ -74,6 +74,14 @@ error_exit() {
     exit 1
 }
 
+check_dependency() {
+    local cmd="$1"
+    local pkg="$2"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        error_exit "${cmd} not found. Install it: ${pkg}"
+    fi
+}
+
 show_help() {
     cat << EOF
 Usage: ./generate.sh [OPTIONS]
@@ -181,6 +189,12 @@ parse_toml() {
             if [[ "$value" =~ ^\"(.*)\"$ ]]; then
                 value="${BASH_REMATCH[1]}"
             fi
+
+            # Strip inline comments (everything after first # outside quotes)
+            value="${value%%#*}"
+            # Re-trim whitespace
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
 
             if [[ "$in_clients" == true && "$current_section" == "clients" ]]; then
                 local idx=$((CLIENT_COUNT - 1))
@@ -310,17 +324,21 @@ EOF
 
         local idx=1
         local dns
+        set -f  # disable globbing
         for dns in $dns_sans; do
             echo "DNS.${idx} = ${dns}" >> "$cnf_file"
             idx=$((idx + 1))
         done
+        set +f  # re-enable globbing
 
         idx=1
         local ip
+        set -f  # disable globbing
         for ip in $ip_sans; do
             echo "IP.${idx} = ${ip}" >> "$cnf_file"
             idx=$((idx + 1))
         done
+        set +f  # re-enable globbing
     fi
 }
 
@@ -336,7 +354,7 @@ generate_ca() {
     mkdir -p "$ca_dir"
 
     if [[ "$FORCE" == true ]]; then
-        rm -f "$ca_key" "$ca_crt"
+        rm -f "$ca_key" "$ca_crt" "${ca_dir}/ca.srl"
     fi
 
     if [[ "$FORCE" == false ]] && is_cert_valid "$ca_crt" && [[ -f "$ca_key" ]]; then
@@ -349,7 +367,8 @@ generate_ca() {
     chmod 600 "$ca_key"
 
     echo -e "${BLUE}  📝 Generating CA certificate...${NC}"
-    local subject="/C=${CA_COUNTRY}"
+    local subject=""
+    [[ -n "$CA_COUNTRY" ]] && subject="${subject}/C=${CA_COUNTRY}"
     [[ -n "$CA_STATE" ]] && subject="${subject}/ST=${CA_STATE}"
     [[ -n "$CA_LOCALITY" ]] && subject="${subject}/L=${CA_LOCALITY}"
     [[ -n "$CA_ORGANIZATION" ]] && subject="${subject}/O=${CA_ORGANIZATION}"
@@ -374,6 +393,8 @@ EOF
 }
 
 generate_truststore() {
+    check_dependency "keytool" "sudo apt install default-jre-headless"
+
     local ts_dir="${OUTPUT_DIR}/truststore"
     local ts_jks="${ts_dir}/truststore.jks"
     local ts_creds="${ts_dir}/truststore_creds"
@@ -392,7 +413,7 @@ generate_truststore() {
 
     echo -e "${BLUE}  📝 Creating Java truststore...${NC}"
     keytool -import -alias mataelang-ca -file "$ca_crt" \
-        -keystore "$ts_jks" \
+        -keystore "$ts_jks" -storetype JKS \
         -storepass "$SSL_PASSWORD" -noprompt
 
     echo "$SSL_PASSWORD" > "$ts_creds"
@@ -605,7 +626,11 @@ main() {
     # Create output directory
     mkdir -p "$OUTPUT_DIR" || error_exit "Cannot create output directory: $OUTPUT_DIR"
 
-    echo -e "${BOLD}📁 Output directory: $(realpath "$OUTPUT_DIR")${NC}"
+    if command -v realpath >/dev/null 2>&1; then
+        echo -e "${BOLD}📁 Output directory: $(realpath "$OUTPUT_DIR")${NC}"
+    else
+        echo -e "${BOLD}📁 Output directory: ${OUTPUT_DIR}${NC}"
+    fi
     echo ""
 
     # Generate CA
