@@ -7,40 +7,11 @@ volumes:
   opensearch_data1:
 
 services:
-  broker-mtls-cert-generator:
-    image: eclipse-temurin:17-jre
-    working_dir: /work/scripts
-    restart: "no"
-    entrypoint: ["/bin/bash", "-lc"]
-    command: ["apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl ca-certificates bash coreutils && rm -rf /var/lib/apt/lists/* && /bin/bash /work/scripts/generate-broker-mtls-certs.sh"]
-    environment:
-      - SSL_PASSWORD=${SSL_PASSWORD:-SecurePassword@123}
-      - CERT_VALIDITY_DAYS=365
-      - CERT_RENEW_THRESHOLD_DAYS=60
-      - HOST_UID=${HOST_UID:-1000}
-      - HOST_GID=${HOST_GID:-1000}
-    env_file:
-      - .env
-    volumes:
-      - ./scripts/generate-broker-mtls-certs.sh:/work/scripts/generate-broker-mtls-certs.sh:ro
-      - ./certs/ca-creds:/work/certs/ca-creds
-      - ./certs/truststore:/work/certs/truststore
-      - ./certs/broker-creds:/work/certs/broker-creds
-      - ./certs/schema-registry-creds:/work/certs/schema-registry-creds
-      - ./certs/kafka-ui-creds:/work/certs/kafka-ui-creds
-      - ./certs/event-stream-aggr-creds:/work/certs/event-stream-aggr-creds
-      - ./certs/sensor-api-creds:/work/certs/sensor-api-creds
-      - ./certs/logstash-creds:/work/certs/logstash-creds
-      - ./certs/opensearch:/work/certs/opensearch
-
   sensor-api:
     image: ghcr.io/mata-elang-stable/sensor-snort-service:latest
     command: "server -v"
     restart: unless-stopped
     depends_on:
-      broker-mtls-cert-generator:
-        condition: service_completed_successfully
-        required: false
       broker:
         condition: service_started
       schema-registry:
@@ -48,10 +19,16 @@ services:
     ports:
       - "50051:50051"
     volumes:
-      - ./certs/ca-creds/ca.pem:/app/ca.pem:ro
-      - ./certs/sensor-api-creds/sensor-api.p12:/app/sensor-client.p12:ro
+      - ../ssl_certs/ca/ca.crt:/app/ca.pem:ro
+      - ../ssl_certs/sensor-api/sensor-api.p12:/app/sensor-client.p12:ro
+      - ../ssl_certs/sensor-api/sensor-api.crt:/app/server.crt:ro
+      - ../ssl_certs/sensor-api/sensor-api.key:/app/server.key:ro
     env_file:
       - .env
+    environment:
+      MES_SERVER_SECURE: "true"
+      MES_SERVER_CERTIFICATE: /app/server.crt
+      MES_SERVER_KEY: /app/server.key
     deploy:
       resources:
         limits:
@@ -61,10 +38,6 @@ services:
   broker:
     image: confluentinc/cp-kafka:8.2.0
     restart: unless-stopped
-    depends_on:
-      broker-mtls-cert-generator:
-        condition: service_completed_successfully
-        required: false
     environment:
       - KAFKA_SSL_CLIENT_AUTH=required
       - KAFKA_NODE_ID=1
@@ -103,24 +76,21 @@ services:
       - CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
     volumes:
       - kafka_data:/var/lib/kafka/data
-      - ./certs/broker-creds:/etc/kafka/secrets
-      - ./certs/truststore/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
-      - ./certs/truststore/truststore_creds:/etc/kafka/secrets/truststore_creds:ro
+      - ../ssl_certs/broker:/etc/kafka/secrets
+      - ../ssl_certs/truststore/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ../ssl_certs/truststore/truststore_creds:/etc/kafka/secrets/truststore_creds:ro
 
   schema-registry:
     image: confluentinc/cp-schema-registry:8.2.0
     restart: unless-stopped
     depends_on:
-      broker-mtls-cert-generator:
-        condition: service_completed_successfully
-        required: false
       broker:
         condition: service_started
     ports:
       - "8081:8081"
     volumes:
-      - ./certs/truststore/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
-      - ./certs/schema-registry-creds/schema-registry-keystore.jks:/etc/kafka/secrets/schema-registry-keystore.jks:ro
+      - ../ssl_certs/truststore/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ../ssl_certs/schema-registry/schema-registry-keystore.jks:/etc/kafka/secrets/schema-registry-keystore.jks:ro
     environment:
       - SCHEMA_REGISTRY_HOST_NAME=schema-registry
       - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=broker:19094
@@ -142,9 +112,6 @@ services:
     image: provectuslabs/kafka-ui:latest
     restart: unless-stopped
     depends_on:
-      broker-mtls-cert-generator:
-        condition: service_completed_successfully
-        required: false
       broker:
         condition: service_started
       schema-registry:
@@ -152,8 +119,8 @@ services:
     ports:
       - "9021:8080"
     volumes:
-      - ./certs/truststore/truststore.jks:/app/truststore.jks:ro
-      - ./certs/kafka-ui-creds/kafka-ui.p12:/app/kafka-ui-keystore.p12:ro
+      - ../ssl_certs/truststore/truststore.jks:/app/truststore.jks:ro
+      - ../ssl_certs/kafka-ui/kafka-ui.p12:/app/kafka-ui-keystore.p12:ro
     environment:
       - KAFKA_CLUSTERS_0_NAME=MataElangKafkaCluster
       - KAFKA_CLUSTERS_0_SCHEMAREGISTRY=https://schema-registry:8081
@@ -184,16 +151,13 @@ services:
     restart: unless-stopped
     command: "-v"
     depends_on:
-      broker-mtls-cert-generator:
-        condition: service_completed_successfully
-        required: false
       broker:
         condition: service_started
       schema-registry:
         condition: service_started
     volumes:
-      - ./certs/ca-creds/ca.pem:/app/ca.pem:ro
-      - ./certs/event-stream-aggr-creds/event-stream-aggr.p12:/app/event-stream-client.p12:ro
+      - ../ssl_certs/ca/ca.crt:/app/ca.pem:ro
+      - ../ssl_certs/event-stream-aggr/event-stream-aggr.p12:/app/event-stream-client.p12:ro
     environment:
       - KAFKA_BROKERS=broker:19094
       - INPUT_KAFKA_TOPIC=sensor_events
@@ -236,7 +200,8 @@ services:
         hard: 65536
     volumes:
       - opensearch_data1:/usr/share/opensearch/data
-      - ./certs/opensearch:/usr/share/opensearch/config/certificates:ro
+      - ../ssl_certs/opensearch:/usr/share/opensearch/config/certificates:ro
+      - ../ssl_certs/ca/ca.crt:/usr/share/opensearch/config/certificates/root-ca.pem:ro
 
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:3
@@ -255,9 +220,6 @@ services:
     image: opensearchproject/logstash-oss-with-opensearch-output-plugin:8.9.0
     restart: unless-stopped
     depends_on:
-      broker-mtls-cert-generator:
-        condition: service_completed_successfully
-        required: false
       broker:
         condition: service_started
       schema-registry:
@@ -269,8 +231,8 @@ services:
     command: "-f /usr/share/logstash/config/pipeline.conf"
     volumes:
       - ./conf/pipeline.conf:/usr/share/logstash/config/pipeline.conf:ro
-      - ./certs/truststore/truststore.jks:/usr/share/logstash/config/truststore.jks:ro
-      - ./certs/logstash-creds/logstash-keystore.jks:/usr/share/logstash/config/logstash-keystore.jks:ro
+      - ../ssl_certs/truststore/truststore.jks:/usr/share/logstash/config/truststore.jks:ro
+      - ../ssl_certs/logstash/logstash-keystore.jks:/usr/share/logstash/config/logstash-keystore.jks:ro
     environment:
       - LS_JAVA_OPT=-Xmx512m -Xms512m
       - LOGSTASH_INTERNAL_PASSWORD=${LOGSTASH_INTERNAL_PASSWORD:-}
