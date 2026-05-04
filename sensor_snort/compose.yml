@@ -38,8 +38,13 @@ services:
       - snort
     env_file:
       - .env
+    environment:
+      MES_CLIENT_SECURE: "true"
+      MES_CLIENT_CERTIFICATE: /secrets/ca.crt
+      MES_CLIENT_SERVER_NAME: sensor-api
     volumes:
       - snort_log:/var/log/snort:rw
+      - ../ssl_certs/ca/ca.crt:/secrets/ca.crt:ro
     deploy:
       resources:
         limits:

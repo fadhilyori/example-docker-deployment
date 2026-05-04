@@ -1,0 +1,84 @@
+# =============================================================================
+# Mata Elang TLS Certificate Configuration
+# =============================================================================
+# Copy this file to config.toml and customize before running ./generate.sh
+#
+# Prerequisites: openssl, keytool (from OpenJDK/JRE)
+#   sudo apt install openssl default-jre-headless
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# CA (Certificate Authority) settings
+# -----------------------------------------------------------------------------
+[ca]
+common_name = "mataelang-ca"
+organization = "MATAELANG"
+country = "ID"
+state = "EastJava"
+locality = "Surabaya"
+days_valid = 3650        # CA validity in days (~10 years)
+key_size = 4096
+
+# -----------------------------------------------------------------------------
+# SSL/TLS settings
+# -----------------------------------------------------------------------------
+[ssl]
+password = "SecurePassword@123"    # Password for all keystores and keys
+
+# -----------------------------------------------------------------------------
+# Output settings
+# -----------------------------------------------------------------------------
+[output]
+directory = "./ssl_certs"          # Where all generated certs are stored
+
+# -----------------------------------------------------------------------------
+# Kafka Client Certificates
+# -----------------------------------------------------------------------------
+# Each [[clients]] block defines one client certificate.
+#   name:           Common Name (CN) for the certificate
+#   dns:            Subject Alternative Name DNS entries
+#   ip:             Subject Alternative Name IP entries (optional)
+#   keystore_type:  "pkcs12" or "jks" — output keystore format
+#   keystore_filename: (optional) overrides the PKCS12 keystore filename
+
+[[clients]]
+name = "broker"
+dns = ["broker", "localhost"]
+ip = ["127.0.0.1"]
+keystore_type = "pkcs12"
+keystore_filename = "kafka.broker.keystore.pkcs12"
+
+[[clients]]
+name = "schema-registry"
+dns = ["schema-registry", "localhost"]
+keystore_type = "jks"
+
+[[clients]]
+name = "kafka-ui"
+dns = ["kafka-ui", "localhost"]
+keystore_type = "jks"
+
+[[clients]]
+name = "logstash"
+dns = ["logstash", "localhost"]
+keystore_type = "jks"
+
+[[clients]]
+name = "event-stream-aggr"
+dns = ["event-stream-aggr", "localhost"]
+keystore_type = "pkcs12"
+
+[[clients]]
+name = "sensor-api"
+dns = ["sensor-api", "localhost"]
+keystore_type = "pkcs12"
+
+# -----------------------------------------------------------------------------
+# OpenSearch Node Certificate
+# -----------------------------------------------------------------------------
+# OpenSearch uses raw PEM files (not JKS/PKCS12).
+# The CA cert (ca.crt) is mounted directly as the trusted CA.
+[opensearch]
+node_name = "opensearch-node1"
+dns = ["opensearch-node1", "localhost"]
+ip = ["127.0.0.1"]
