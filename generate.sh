@@ -181,6 +181,9 @@ parse_toml() {
             local key="${BASH_REMATCH[1]}"
             local value="${BASH_REMATCH[2]}"
 
+            # Strip inline comments (everything after first unquoted #)
+            value="${value%%#*}"
+
             # Trim whitespace from value
             value="${value#"${value%%[![:space:]]*}"}"
             value="${value%"${value##*[![:space:]]}"}"
@@ -189,12 +192,6 @@ parse_toml() {
             if [[ "$value" =~ ^\"(.*)\"$ ]]; then
                 value="${BASH_REMATCH[1]}"
             fi
-
-            # Strip inline comments (everything after first # outside quotes)
-            value="${value%%#*}"
-            # Re-trim whitespace
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
 
             if [[ "$in_clients" == true && "$current_section" == "clients" ]]; then
                 local idx=$((CLIENT_COUNT - 1))
@@ -374,20 +371,12 @@ generate_ca() {
     [[ -n "$CA_ORGANIZATION" ]] && subject="${subject}/O=${CA_ORGANIZATION}"
     subject="${subject}/CN=${CA_COMMON_NAME}"
 
-    local ca_ext_file="${ca_dir}/ca_ext.cnf"
-    cat > "$ca_ext_file" << EOF
-[ca_extensions]
-basicConstraints = critical, CA:TRUE
-keyUsage = critical, keyCertSign, cRLSign
-subjectKeyIdentifier = hash
-EOF
-
     openssl req -new -x509 -key "$ca_key" -subj "$subject" \
         -days "$CA_DAYS_VALID" \
-        -extensions ca_extensions -extfile "$ca_ext_file" \
-        -out "$ca_crt"
-
-    rm -f "$ca_ext_file"
+        -addext "basicConstraints=critical,CA:TRUE" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" \
+        -addext "subjectKeyIdentifier=hash" \
+        -out "$ca_crt" || error_exit "Failed to create CA certificate"
     echo -e "${GREEN}  ✅ CA certificate generated${NC}"
     return 0
 }
@@ -414,7 +403,7 @@ generate_truststore() {
     echo -e "${BLUE}  📝 Creating Java truststore...${NC}"
     keytool -import -alias mataelang-ca -file "$ca_crt" \
         -keystore "$ts_jks" -storetype JKS \
-        -storepass "$SSL_PASSWORD" -noprompt
+        -storepass "$SSL_PASSWORD" -noprompt || error_exit "Failed to create truststore"
 
     echo "$SSL_PASSWORD" > "$ts_creds"
     echo -e "${GREEN}  ✅ Truststore generated${NC}"
@@ -424,8 +413,8 @@ generate_truststore() {
 generate_client_cert() {
     local idx="$1"
     local name="${CLIENT_NAMES[idx]}"
-    local dns_sans="${CLIENT_DNS[idx]}"
-    local ip_sans="${CLIENT_IPS[idx]}"
+    local dns_sans="${CLIENT_DNS[idx]:-}"
+    local ip_sans="${CLIENT_IPS[idx]:-}"
     local keystore_type="${CLIENT_KEYSTORE_TYPES[idx]:-pkcs12}"
     local keystore_filename="${CLIENT_KEYSTORE_FILENAMES[idx]:-}"
 
@@ -459,24 +448,24 @@ generate_client_cert() {
     create_client_cnf "$cnf_file" "$name" "$dns_sans" "$ip_sans"
 
     # Generate private key
-    openssl genrsa -out "$cert_key" 2048
+    openssl genrsa -out "$cert_key" 2048 || error_exit "Failed to generate key for ${name}"
 
     # Create CSR
-    openssl req -new -key "$cert_key" -out "$cert_csr" -config "$cnf_file"
+    openssl req -new -key "$cert_key" -out "$cert_csr" -config "$cnf_file" || error_exit "Failed to create CSR for ${name}"
 
     # Sign with CA
     openssl x509 -req -in "$cert_csr" \
         -CA "$ca_crt" -CAkey "$ca_key" -CAcreateserial \
         -out "$cert_crt" \
         -days 3650 \
-        -extensions v3_req -extfile "$cnf_file"
+        -extensions v3_req -extfile "$cnf_file" || error_exit "Failed to sign certificate for ${name}"
 
     # Create PKCS12 keystore
     openssl pkcs12 -export -in "$cert_crt" -inkey "$cert_key" \
         -chain -CAfile "$ca_crt" \
         -name "$name" \
         -out "$cert_p12" \
-        -password pass:"$SSL_PASSWORD"
+        -password pass:"$SSL_PASSWORD" || error_exit "Failed to create PKCS12 for ${name}"
 
     # Convert to JKS if needed
     if [[ "$keystore_type" == "jks" ]]; then
@@ -549,17 +538,17 @@ generate_opensearch_cert() {
     create_client_cnf "$cnf_file" "$node_name" "$dns_sans" "$ip_sans"
 
     # Generate private key
-    openssl genrsa -out "$cert_key" 2048
+    openssl genrsa -out "$cert_key" 2048 || error_exit "Failed to generate OpenSearch key"
 
     # Create CSR
-    openssl req -new -key "$cert_key" -out "$cert_csr" -config "$cnf_file"
+    openssl req -new -key "$cert_key" -out "$cert_csr" -config "$cnf_file" || error_exit "Failed to create OpenSearch CSR"
 
     # Sign with CA
     openssl x509 -req -in "$cert_csr" \
         -CA "$ca_crt" -CAkey "$ca_key" -CAcreateserial \
         -out "$cert_pem" \
         -days 3650 \
-        -extensions v3_req -extfile "$cnf_file"
+        -extensions v3_req -extfile "$cnf_file" || error_exit "Failed to sign OpenSearch certificate"
 
     # Set permissions
     chmod 644 "$cert_pem"
